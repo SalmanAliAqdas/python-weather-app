@@ -8,6 +8,7 @@ import json
 import ssl
 import unittest
 import urllib.error
+from unittest.mock import patch
 
 import weather
 
@@ -76,12 +77,51 @@ class ParsingTests(unittest.TestCase):
         with self.assertRaises(weather.WeatherError):
             weather.parse_forecast({})
 
+    def test_optional_fields_and_hourly_forecast(self):
+        data = {
+            **SAMPLE,
+            "timezone": "Asia/Karachi",
+            "hourly": {
+                "time": ["2026-10-12T10:00", "2026-10-12T11:00"],
+                "temperature_2m": [29.4, 30.0],
+                "precipitation_probability": [10, 20],
+                "weather_code": [2, 61],
+            },
+        }
+        data["current"] = {**SAMPLE["current"], "surface_pressure": 1002.1, "visibility": 9000}
+        result = weather.parse_forecast(data)
+        self.assertEqual(result["pressure"], 1002.1)
+        self.assertEqual(result["visibility"], 9000)
+        self.assertEqual(result["hours"][1]["rain_probability"], 20)
+        self.assertEqual(result["hours"][1]["conditions"], "Light rain")
+
+    def test_missing_optional_fields_do_not_break_current_weather(self):
+        result = weather.parse_forecast({"current": {"temperature_2m": 18.0}})
+        self.assertIsNone(result["humidity"])
+        self.assertIsNone(result["conditions"])
+        self.assertEqual(result["days"], [])
+        self.assertEqual(result["hours"], [])
+
+    def test_provider_error_response(self):
+        with self.assertRaises(weather.WeatherError):
+            weather.parse_forecast({"error": True, "reason": "down"})
+
+    def test_malformed_temperature_is_rejected(self):
+        with self.assertRaises(weather.WeatherError):
+            weather.parse_forecast({"current": {"temperature_2m": "warm"}})
+
     def test_unknown_weather_code(self):
         self.assertEqual(weather.describe_code(12345), "Unknown conditions")
 
     def test_missing_number_shows_na(self):
         self.assertEqual(weather.number_text(None), "n/a")
         self.assertEqual(weather.number_text(3.14159), "3.1")
+
+    def test_temperature_conversion(self):
+        self.assertEqual(weather.convert_temperature(0, "°F"), 32)
+        self.assertEqual(weather.convert_temperature(100, "°F"), 212)
+        self.assertEqual(weather.convert_temperature(23, "°C"), 23)
+        self.assertIsNone(weather.convert_temperature(None, "°F"))
 
 
 class UrlTests(unittest.TestCase):
@@ -90,6 +130,13 @@ class UrlTests(unittest.TestCase):
         self.assertIn("latitude=31.5497", url)
         self.assertIn("longitude=74.3436", url)
         self.assertIn("temperature_unit=celsius", url)
+        self.assertIn("hourly=", url)
+        self.assertIn("sunrise", url)
+
+    def test_no_api_key_or_credentials_required(self):
+        with patch.dict("os.environ", {}, clear=True):
+            url = weather.build_forecast_url(31.5497, 74.3436)
+        self.assertNotIn("apikey", url.lower())
 
     def test_geocoding_url_encodes_spaces(self):
         url = weather.build_geocoding_url("New York")
@@ -138,6 +185,18 @@ class NetworkErrorTests(unittest.TestCase):
             weather.fetch_json("https://example.com", fake_opener_raising(error))
         self.assertIn("500", str(caught.exception))
 
+    def test_rate_limit(self):
+        error = urllib.error.HTTPError("https://example.com", 429, "Too Many Requests", {}, None)
+        with self.assertRaises(weather.WeatherError) as caught:
+            weather.fetch_json("https://example.com", fake_opener_raising(error))
+        self.assertIn("rate limit", str(caught.exception))
+
+    def test_auth_error(self):
+        error = urllib.error.HTTPError("https://example.com", 403, "Forbidden", {}, None)
+        with self.assertRaises(weather.WeatherError) as caught:
+            weather.fetch_json("https://example.com", fake_opener_raising(error))
+        self.assertIn("denied", str(caught.exception))
+
     def test_timeout(self):
         with self.assertRaises(weather.WeatherError):
             weather.fetch_json("https://example.com", fake_opener_raising(TimeoutError()))
@@ -162,6 +221,10 @@ class CitySearchTests(unittest.TestCase):
     def test_empty_name(self):
         with self.assertRaises(weather.WeatherError):
             weather.find_city("   ", fake_opener_returning(GEOCODE_SAMPLE))
+
+    def test_malformed_city_response(self):
+        with self.assertRaises(weather.WeatherError):
+            weather.find_city("Lahore", fake_opener_returning({"results": [None]}))
 
 
 class MenuTests(unittest.TestCase):

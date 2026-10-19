@@ -84,6 +84,10 @@ def fetch_json(url, opener=urllib.request.urlopen):
         with opener(request, timeout=TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
+        if error.code == 429:
+            raise WeatherError("The weather service is busy (rate limit). Please try again shortly.") from error
+        if error.code in (401, 403):
+            raise WeatherError("The weather service denied this request. Please try again later.") from error
         raise WeatherError(f"The weather service returned an error (code {error.code}). Try again later.")
     except urllib.error.URLError as error:
         raise WeatherError(explain_connection_problem(error.reason))
@@ -99,8 +103,9 @@ def build_forecast_url(latitude, longitude):
     query = urllib.parse.urlencode({
         "latitude": latitude,
         "longitude": longitude,
-        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,surface_pressure,visibility,is_day",
+        "hourly": "temperature_2m,precipitation_probability,weather_code",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset",
         "timezone": "auto",
         "forecast_days": FORECAST_DAYS,
         "temperature_unit": "celsius",
@@ -120,18 +125,24 @@ def find_city(name, opener=urllib.request.urlopen):
     if not name:
         raise WeatherError("Please type a city name.")
     data = fetch_json(build_geocoding_url(name), opener)
+    if not isinstance(data, dict) or data.get("error"):
+        raise WeatherError("The city search is unavailable right now. Please try again.")
     results = data.get("results") or []
+    if not isinstance(results, list):
+        raise WeatherError("The city search sent an incomplete answer. Try again.")
     if not results:
         raise WeatherError(f"Could not find a city called '{name}'. Check the spelling.")
     first = results[0]
     try:
+        if not isinstance(first, dict):
+            raise TypeError
         return {
             "name": first["name"],
             "country": first.get("country", ""),
             "latitude": first["latitude"],
             "longitude": first["longitude"],
         }
-    except KeyError:
+    except (KeyError, TypeError):
         raise WeatherError("The city search sent an incomplete answer. Try again.")
 
 
@@ -142,30 +153,67 @@ def describe_code(code):
 
 
 def parse_forecast(data):
-    """Pick out the numbers we need. Raises WeatherError if anything is missing."""
-    try:
-        current = data["current"]
-        daily = data["daily"]
-        parsed = {
-            "time": current["time"],
-            "temperature": current["temperature_2m"],
-            "feels_like": current["apparent_temperature"],
-            "humidity": current["relative_humidity_2m"],
-            "wind": current["wind_speed_10m"],
-            "conditions": describe_code(current["weather_code"]),
-            "days": [],
-        }
+    """Normalize the available Open-Meteo fields for both the CLI and web app."""
+    if not isinstance(data, dict) or data.get("error"):
+        raise WeatherError("The weather service could not provide weather data. Try again later.")
+    current = data.get("current")
+    if (not isinstance(current, dict) or
+            not isinstance(current.get("temperature_2m"), (int, float)) or
+            isinstance(current.get("temperature_2m"), bool)):
+        raise WeatherError("The weather service sent incomplete current weather data. Try again.")
+
+    def numeric(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def code_value(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def row_value(section, key, index):
+        values = section.get(key)
+        return values[index] if isinstance(values, list) and index < len(values) else None
+
+    parsed = {
+        "time": current.get("time"),
+        "temperature": current["temperature_2m"],
+        "feels_like": numeric(current.get("apparent_temperature")),
+        "humidity": numeric(current.get("relative_humidity_2m")),
+        "wind": numeric(current.get("wind_speed_10m")),
+        "pressure": numeric(current.get("surface_pressure")),
+        "visibility": numeric(current.get("visibility")),
+        "is_day": current.get("is_day"),
+        "code": code_value(current.get("weather_code")),
+        "conditions": describe_code(current["weather_code"]) if code_value(current.get("weather_code")) is not None else None,
+        "timezone": data.get("timezone"),
+        "days": [],
+        "hours": [],
+    }
+    daily = data.get("daily")
+    if isinstance(daily, dict) and isinstance(daily.get("time"), list):
         for index, day in enumerate(daily["time"]):
+            code = code_value(row_value(daily, "weather_code", index))
             parsed["days"].append({
                 "date": day,
-                "conditions": describe_code(daily["weather_code"][index]),
-                "max": daily["temperature_2m_max"][index],
-                "min": daily["temperature_2m_min"][index],
-                "rain": daily["precipitation_sum"][index],
+                "code": code,
+                "conditions": describe_code(code) if code is not None else None,
+                "max": numeric(row_value(daily, "temperature_2m_max", index)),
+                "min": numeric(row_value(daily, "temperature_2m_min", index)),
+                "rain": numeric(row_value(daily, "precipitation_sum", index)),
+                "rain_probability": numeric(row_value(daily, "precipitation_probability_max", index)),
+                "sunrise": row_value(daily, "sunrise", index),
+                "sunset": row_value(daily, "sunset", index),
             })
-        return parsed
-    except (KeyError, IndexError, TypeError):
-        raise WeatherError("The weather service sent incomplete data. Try again.")
+    hourly = data.get("hourly")
+    if isinstance(hourly, dict) and isinstance(hourly.get("time"), list):
+        for index, hour in enumerate(hourly["time"]):
+            code = code_value(row_value(hourly, "weather_code", index))
+            parsed["hours"].append({
+                "time": hour,
+                "temperature": numeric(row_value(hourly, "temperature_2m", index)),
+                "rain_probability": numeric(row_value(hourly, "precipitation_probability", index)),
+                "code": code,
+                "conditions": describe_code(code) if code is not None else None,
+            })
+    return parsed
 
 
 def number_text(value, decimals=1):
@@ -173,6 +221,13 @@ def number_text(value, decimals=1):
     if value is None:
         return "n/a"
     return f"{value:.{decimals}f}"
+
+
+def convert_temperature(value, unit="°C"):
+    """Convert a Celsius reading to the chosen display unit."""
+    if value is None:
+        return None
+    return value * 9 / 5 + 32 if unit == "°F" else value
 
 
 def format_day(day_text):
@@ -187,14 +242,14 @@ def format_report(city, weather):
     lines = [
         place,
         f"  Now: {number_text(weather['temperature'])}°C "
-        f"(feels like {number_text(weather['feels_like'])}°C), {weather['conditions']}",
+        f"(feels like {number_text(weather['feels_like'])}°C), {weather['conditions'] or 'conditions unavailable'}",
         f"  Humidity: {number_text(weather['humidity'], 0)}%   "
         f"Wind: {number_text(weather['wind'])} km/h",
         f"  {len(weather['days'])}-day forecast:",
     ]
     for day in weather["days"]:
         lines.append(
-            f"    {format_day(day['date'])}  {day['conditions']:<22} "
+            f"    {format_day(day['date'])}  {(day['conditions'] or 'Unavailable'):<22} "
             f"{number_text(day['min'])} to {number_text(day['max'])}°C   "
             f"rain {number_text(day['rain'])} mm"
         )

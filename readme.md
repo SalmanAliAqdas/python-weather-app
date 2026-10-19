@@ -1,73 +1,75 @@
-# Python Weather App
+# Skyline Weather
 
-A command-line weather app written in Python. It shows the current weather and a 5-day forecast for **Lahore, Karachi and Islamabad**, in degrees Celsius, and can also look up any other city in the world.
+A polished weather dashboard built with Streamlit and Open-Meteo. Search cities worldwide, browse current conditions and forecasts, or run the original command-line app for quick reports.
 
-Weather data comes from the free [Open-Meteo](https://open-meteo.com/) service. No account, no API key and no extra packages are needed.
+**Live demo:** [Add Streamlit Community Cloud URL after deployment](https://share.streamlit.io/)
 
 ## Features
-- Current temperature, "feels like" temperature, humidity and wind speed
-- 5-day forecast with conditions, minimum and maximum temperature, and expected rain
-- One-key shortcuts for Lahore, Karachi and Islamabad, or show all three at once
-- Search any other city by name
-- Friendly messages when there is no internet, the city is not found, or the service is down
-- Automated tests that work without internet (20 tests)
 
-## Requirements
-- Python 3 installed
-- An internet connection when you run the app
+- Current temperature, conditions, feels-like temperature, humidity and wind
+- Surface pressure, visibility, sunrise and sunset when available
+- Next-hours forecast with an interactive temperature chart
+- Five-day forecast with highs, lows and rain probability when available
+- Celsius/Fahrenheit display switch and recent searches for the current browser session
+- Friendly messages for invalid cities and service failures
+- Ten-minute in-memory API response cache to limit requests
 
-## How to run
-```
-python weather.py
-```
-If `python` is not recognized on Windows, use `py weather.py`.
+All weather values come from Open-Meteo. Missing provider values are omitted rather than estimated by the app.
 
-## How to use it
-Type a number from the menu and press Enter:
+## Technologies
 
-```
-Weather App (temperatures in °C)
-  1. Lahore
-  2. Karachi
-  3. Islamabad
-  4. All three cities
-  5. Search another city
-  q. Quit
+Python 3.10+, Streamlit, Altair (installed with Streamlit), pandas (installed with Streamlit), and Python's standard-library `urllib` for API requests. The web and command-line apps share the same provider and parsing functions in `weather.py`.
+
+## Installation and local use
+
+```bash
+git clone <repository-url>
+cd python-weather-app
+python -m venv .venv
 ```
 
-Example output (format only, the numbers change every time):
-```
-Lahore, Pakistan
-  Now: 29.4°C (feels like 31.0°C), Partly cloudy
-  Humidity: 45%   Wind: 8.3 km/h
-  3-day forecast:
-    Mon 12 Oct  Partly cloudy          19.0 to 31.2°C   rain 0.0 mm
-    Tue 13 Oct  Clear sky              20.1 to 32.0°C   rain 0.0 mm
-    Wed 14 Oct  Light rain             21.0 to 28.5°C   rain 4.2 mm
+Activate the virtual environment with `.venv\Scripts\activate` on Windows or `source .venv/bin/activate` on macOS/Linux, then run:
+
+```bash
+python -m pip install -r requirements.txt
+python -m streamlit run streamlit_app.py
 ```
 
-## Running the tests
-The tests use fake weather data, so they run without internet:
-```
+Open the local URL printed by Streamlit. The original command-line app remains available with `python weather.py`.
+
+## Configuration
+
+**Required environment variables: none.** The Open-Meteo public, non-commercial API requires no API key. No Streamlit Cloud secrets need to be configured. Do not commit a `.env` file or `.streamlit/secrets.toml` if you add unrelated local settings later.
+
+## Deploy to Streamlit Community Cloud
+
+1. Push this repository to GitHub after reviewing the changes.
+2. In [Streamlit Community Cloud](https://share.streamlit.io/), create a new app from that repository and choose the branch to publish.
+3. Set the main file path to **`streamlit_app.py`**.
+4. Leave app secrets empty; no secret name is required.
+5. Deploy and add the public URL to the live demo link above.
+
+The platform installs `requirements.txt` automatically. Docker is not required.
+
+## Tests
+
+```bash
 python -m unittest -v
 ```
 
-## How it works
-1. The app builds a web address containing the city's latitude and longitude.
-2. It downloads the answer (JSON data) using Python's built-in `urllib`.
-3. It picks out the numbers it needs and turns weather codes into plain English.
-4. It prints a readable report.
+Tests mock API responses and run without network access.
 
-## Data source and licensing
-Weather data by [Open-Meteo.com](https://open-meteo.com/). Their free service is intended for non-commercial use. Check their terms before using this in a commercial product.
+## Screenshots
 
-## Project structure
-- `weather.py`: the app
-- `test_weather.py`: automated tests
-- `.gitignore`: files Git should ignore
-- `readme.md`: this file
+Add screenshots of the desktop and mobile dashboard after deployment.
 
-## Possible future improvements
-- Hourly forecast
-- Choose Celsius or Fahrenheit
-- A web or mobile version
+## Data source and limitations
+
+Weather data and geocoding: [Open-Meteo](https://open-meteo.com/). Open-Meteo's [free API terms](https://open-meteo.com/en/terms) allow non-commercial use and require attribution. Commercial use needs an appropriate Open-Meteo plan or license. Forecasts are estimates, and available fields can vary by location or model. The free service has rate limits and no uptime guarantee. Search history lasts only for the current Streamlit session.
+
+## Project files
+
+- `streamlit_app.py`: Streamlit dashboard
+- `weather.py`: shared API client, parsing, and original command-line app
+- `test_weather.py`: automated API and parsing tests
+- `requirements.txt`: web dependencies
