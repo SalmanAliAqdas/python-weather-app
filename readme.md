@@ -13,6 +13,7 @@ A polished weather dashboard built with Streamlit and Open-Meteo. Search cities 
 - Celsius/Fahrenheit display switch and recent searches for the current browser session
 - Friendly messages for invalid cities and service failures
 - Ten-minute in-memory API response cache to limit requests
+- Weather-aware backgrounds, bundled vector icons, and layouts for desktop and mobile
 
 All weather values come from Open-Meteo. Missing provider values are omitted rather than estimated by the app.
 
@@ -61,7 +62,9 @@ Tests mock API responses and run without network access.
 
 ## Screenshots
 
-Add screenshots of the desktop and mobile dashboard after deployment.
+![Skyline desktop dashboard](docs/screenshots/desktop.png)
+
+[View the mobile layout](docs/screenshots/mobile.png). Screenshots show real Open-Meteo data captured on October 19, 2026; displayed weather changes over time.
 
 ## Data source and limitations
 
@@ -70,6 +73,10 @@ Weather data and geocoding: [Open-Meteo](https://open-meteo.com/). Open-Meteo's 
 ## Project files
 
 - `streamlit_app.py`: Streamlit dashboard
+- `weather_ui.py`: presentation helpers and original CC0-1.0 weather icons
+- `assets/dashboard.css`: centralized dashboard styling
+- `.streamlit/config.toml`: light theme and native widget appearance
 - `weather.py`: shared API client, parsing, and original command-line app
 - `test_weather.py`: automated API and parsing tests
+- `test_dashboard.py`: rendering, search, units, and caching regression tests
 - `requirements.txt`: web dependencies
